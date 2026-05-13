@@ -154,7 +154,6 @@ def make_zimage_tokenize_with_weights(original_tokenize_with_weights, inner_sd_t
 # ===========================================================================
 
 def zimage_encode_token_weights_negpip(real_encoder, token_weight_pairs):
-    global _negated_spans_cache
     from comfy import model_management
     self = real_encoder
 
