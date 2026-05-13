@@ -156,10 +156,12 @@ class CLIPNegPip(io.ComfyNode):
                         else:
                             pass
 
-                        original_tww = zi_tokenizer.tokenize_with_weights
-                        zi_tokenizer.tokenize_with_weights = make_zimage_tokenize_with_weights(
-                            original_tww, inner_tokenizer
-                        )
+                    if not getattr(zi_tokenizer, "_negpip_patched", False):
+                            original_tww = zi_tokenizer.tokenize_with_weights
+                            zi_tokenizer.tokenize_with_weights = make_zimage_tokenize_with_weights(
+                                original_tww, inner_tokenizer
+                            )
+                            zi_tokenizer._negpip_patched = True
 
                     c.patcher.add_object_patch(
                         f"{encoder}.encode_token_weights",
