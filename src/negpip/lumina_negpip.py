@@ -73,7 +73,7 @@ def _make_negpip_cond(tensor: torch.Tensor) -> CONDNegpipZImage:
 # ===========================================================================
 
 def make_zimage_tokenize_with_weights(original_tokenize_with_weights, inner_sd_tokenizer):
-    KNOWN_KEYS = ["qwen3_4b", "gemma3_4b"]
+    KNOWN_KEYS = ["qwen3_4b"]
     NEG_BLOCK_RE = re.compile(r"\(([^()]*?):\s*(-?\d+(?:\.\d+)?)\)")
 
     def _strip_negative_blocks(raw_text: str):
@@ -126,14 +126,8 @@ def zimage_encode_token_weights_negpip(real_encoder, token_weight_pairs):
     has_cached_negated = (
         hasattr(token_weight_pairs, "negpip_spans") and bool(token_weight_pairs.negpip_spans)
     )
-    
-    has_non_unit_weights = False
 
     to_encode_tokens = [[item[0] for item in chunk] for chunk in token_weight_pairs]
-    max_token_len = max((len(t) for t in to_encode_tokens), default=0)
-
-    has_empty_baseline = False
-    token_weight_pairs_abs = token_weight_pairs
 
     o = self.encode(to_encode_tokens)
     out, pooled = o[:2]
