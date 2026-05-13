@@ -45,7 +45,6 @@ SUPPORTED_ENCODERS = [
     "llama",
     "qwen3_06b",
     "qwen3_4b",
-    "gemma3_4b",
 ]
 
 
@@ -128,21 +127,10 @@ class CLIPNegPip(io.ComfyNode):
         if issubclass(model_type, Lumina2):
             lumina_model: NextDiT = diffusion_model
 
-            zimage_encoder_key = None
-            for candidate in ["gemma3_4b", "qwen3_4b"]:
-                if candidate in encoders:
-                    zimage_encoder_key = candidate
-                    break
-
-            if zimage_encoder_key is None:
-                pass
-            else:
-                pass
-
             for encoder in encoders:
                 encoder_model = getattr(c.patcher.model, encoder)
 
-                if encoder in ("gemma3_4b", "qwen3_4b"):
+                if encoder in ("qwen3_4b"):
                     zi_tokenizer    = c.tokenizer
                     inner_tokenizer = getattr(zi_tokenizer, encoder, None)
 
@@ -174,9 +162,6 @@ class CLIPNegPip(io.ComfyNode):
                         partial(encode_token_weights_negpip, getattr(c.patcher.model, encoder)),
                     )
 
-            # ================================================================ #
-            # Patch extra_conds to forward NEGPIP_ZIMAGE_KEY (+ strength)      #
-            # ================================================================ #
             original_extra_conds = m.model.extra_conds
 
             def lumina2_extra_conds_negpip(*args, **kwargs):
@@ -196,23 +181,15 @@ class CLIPNegPip(io.ComfyNode):
                 return out
 
             m.add_object_patch("extra_conds", lumina2_extra_conds_negpip)
-
-            # ================================================================ #
-            # DIFFUSION_MODEL wrapper                                           #
-            # ================================================================ #
             m.add_wrapper_with_key(
                 comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL,
                 NEGPIP_OPTION,
                 lumina_diffusion_negpip_wrapper,
             )
 
-            # ================================================================ #
-            # Patch JointAttention.forward (the full forward, NOT qkv.forward) #
-            # ================================================================ #
             patched_layers = 0
             for block_name, block in lumina_model.named_modules():
                 if isinstance(block, JointAttention):
-                    is_context_refiner = "context_refiner" in block_name
                     is_main_layers     = "layers" in block_name
                     is_noise_refiner   = "noise_refiner" in block_name
 
