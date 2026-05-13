@@ -16,7 +16,10 @@ ZIMAGE_SUFFIX_TOKEN_COUNT = 5
 
 _negpip_state: dict = {}
 _encoder_tokenizer_cache: dict = {}
-_negated_spans_cache: list =[]
+
+class TokenWeightList(list):
+    """Custom list subclass to carry negated spans through ComfyUI's tokenization pipeline safely."""
+    pass
 
 
 # ===========================================================================
@@ -70,26 +73,24 @@ def make_zimage_tokenize_with_weights(original_tokenize_with_weights, inner_sd_t
     NEG_BLOCK_RE = re.compile(r"\(([^()]*?):\s*(-?\d+(?:\.\d+)?)\)")
 
     def _find_weighted_spans(text):
-        spans =[]
+        spans = []
         for m in re.finditer(r"\(([^()]*?):(-?\d+(?:\.\d+)?)\)", text):
             weight = float(m.group(2))
             if weight != 1.0:
                 spans.append((m.start(1), m.end(1), weight))
         return spans
 
-    def _strip_negative_blocks_keep_cache(raw_text: str):
-        global _negated_spans_cache
-        _negated_spans_cache =[]
-
+    def _strip_negative_blocks(raw_text: str):
+        negated_spans =[]
         def repl(m):
             span_text = m.group(1)
             w = float(m.group(2))
             if w < 0:
-                _negated_spans_cache.append((span_text, w))
+                negated_spans.append((span_text, w))
                 return ""
             return m.group(0)
 
-        return re.sub(NEG_BLOCK_RE, repl, raw_text)
+        return re.sub(NEG_BLOCK_RE, repl, raw_text), negated_spans
 
     def _get_hf_tokenizer(inner_tok):
         for attr in ("tokenizer", "_tokenizer", "hf_tokenizer"):
@@ -99,9 +100,7 @@ def make_zimage_tokenize_with_weights(original_tokenize_with_weights, inner_sd_t
         return None
 
     def patched_tokenize_with_weights(text, return_word_ids=False, **kwargs):
-        global _negated_spans_cache
-
-        clean_text = _strip_negative_blocks_keep_cache(text)
+        clean_text, negated_spans = _strip_negative_blocks(text)
         result = original_tokenize_with_weights(
             clean_text, return_word_ids=return_word_ids, **kwargs
         )
@@ -110,14 +109,18 @@ def make_zimage_tokenize_with_weights(original_tokenize_with_weights, inner_sd_t
         if detected_key is None:
             return result
 
-        wrapped_chunks      = result[detected_key]
-        weight_spans        = _find_weighted_spans(clean_text)
+        wrapped_chunks = result[detected_key]
+        weight_spans   = _find_weighted_spans(clean_text)
 
-        if not weight_spans:
+        if not weight_spans and not negated_spans:
             return result
 
         hf_tok = _get_hf_tokenizer(inner_sd_tokenizer)
         if hf_tok is None:
+            if negated_spans:
+                new_chunks = TokenWeightList(wrapped_chunks)
+                new_chunks.negpip_spans = negated_spans
+                result[detected_key] = new_chunks
             return result
 
         flat_wrapped   = [item for chunk in wrapped_chunks for item in chunk]
@@ -129,7 +132,7 @@ def make_zimage_tokenize_with_weights(original_tokenize_with_weights, inner_sd_t
             try:
                 ids_before = hf_tok.encode(ZIMAGE_CHAT_PREFIX + clean_text[:orig_start], add_special_tokens=False)
                 ids_after  = hf_tok.encode(ZIMAGE_CHAT_PREFIX + clean_text[:orig_end],   add_special_tokens=False)
-            except Exception as e:
+            except Exception:
                 continue
             for pos in range(len(ids_before), len(ids_after)):
                 if pos >= len(flat_injected):
@@ -138,16 +141,18 @@ def make_zimage_tokenize_with_weights(original_tokenize_with_weights, inner_sd_t
                 rest = tuple(old[2:]) if len(old) > 2 else ()
                 flat_injected[pos] = (old[0], w) + rest
 
-        new_chunks, idx =[], 0
+        new_chunks = TokenWeightList()
+        new_chunks.negpip_spans = negated_spans
+        idx = 0
         for chunk in wrapped_chunks:
             new_chunks.append(flat_injected[idx: idx + len(chunk)])
             idx += len(chunk)
+            
         result[detected_key] = new_chunks
 
         return result
 
     return patched_tokenize_with_weights
-
 
 # ===========================================================================
 #  STEP 1 — encode_token_weights replacement
@@ -159,7 +164,9 @@ def zimage_encode_token_weights_negpip(real_encoder, token_weight_pairs):
 
     has_non_unit_weights = any(item[1] != 1.0 for chunk in token_weight_pairs for item in chunk)
     sections             = len(token_weight_pairs)
-    has_cached_negated   = bool(_negated_spans_cache)
+    
+    # Read the spans safely from the TokenWeightList wrapper instead of a global variable
+    has_cached_negated   = hasattr(token_weight_pairs, "negpip_spans") and bool(token_weight_pairs.negpip_spans)
 
     to_encode_tokens = [[item[0] for item in chunk] for chunk in token_weight_pairs]
     max_token_len    = max((len(t) for t in to_encode_tokens), default=0)
@@ -219,9 +226,10 @@ def zimage_encode_token_weights_negpip(real_encoder, token_weight_pairs):
 
         if hf_tok is not None:
             neg_emb_list      =[]
-            neg_strength_list = []
+            neg_strength_list =[]
 
-            for si, (span_text, w) in enumerate(_negated_spans_cache):
+            # We process using the safely passed array attribute
+            for si, (span_text, w) in enumerate(token_weight_pairs.negpip_spans):
                 full_neg_text           = ZIMAGE_CHAT_PREFIX + span_text + ZIMAGE_CHAT_SUFFIX
                 neg_token_ids_templated = hf_tok.encode(full_neg_text, add_special_tokens=False)
 
@@ -289,7 +297,6 @@ def zimage_encode_token_weights_negpip(real_encoder, token_weight_pairs):
     if extra:
         r = r + (extra,)
     return r
-
 
 # ===========================================================================
 #  STEP 2 — DIFFUSION_MODEL wrapper
