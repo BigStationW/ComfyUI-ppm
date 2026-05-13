@@ -425,10 +425,10 @@ def make_joint_attention_forward_negpip(block: JointAttention):
 
             if abs_end <= seqlen:
                 strength_single = _negpip_state.get("strength", None)
+                s = None
                 if strength_single is not None:
                     s = strength_single.to(dtype=xv.dtype, device=xv.device)
-                    s = torch.sign(s)
-                    s[s == 0] = -1
+                    s = torch.abs(s)
                     s = s.view(1, neg_count, 1, 1)
 
                 for b in range(bsz):
@@ -439,8 +439,8 @@ def make_joint_attention_forward_negpip(block: JointAttention):
                     )
                     if not is_uncond:
                         v_slice = xv[b:b+1, abs_start:abs_end]
-                        if strength_single is not None:
-                            xv[b:b+1, abs_start:abs_end] = v_slice * s
+                        if s is not None:
+                            xv[b:b+1, abs_start:abs_end] = -v_slice * s
                         else:
                             xv[b:b+1, abs_start:abs_end] = -v_slice
 
