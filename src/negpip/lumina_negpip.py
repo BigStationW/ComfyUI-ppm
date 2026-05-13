@@ -172,7 +172,7 @@ def zimage_encode_token_weights_negpip(real_encoder, token_weight_pairs):
             to_encode_tokens.append(gen_empty_tokens(self.special_tokens, max_token_len))
         has_empty_baseline     = True
         token_weight_pairs_abs = [
-            [(tid, abs(w)) for tid, w in chunk]
+            [(item[0], abs(item[1])) + tuple(item[2:]) for item in chunk]
             for chunk in token_weight_pairs
         ]
     else:
